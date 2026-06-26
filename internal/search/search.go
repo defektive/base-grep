@@ -9,7 +9,9 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
+	"sync"
 
 	"github.com/defektive/base-grep/internal/permute"
 )
@@ -27,6 +29,10 @@ type Match struct {
 type Searcher struct {
 	variants []permute.Variant
 	minLen   int
+
+	// Concurrency is the number of files searched in parallel during a recursive
+	// directory walk. A value <= 0 means runtime.NumCPU().
+	Concurrency int
 }
 
 // New builds a Searcher from variants, discarding any whose pattern is shorter
@@ -114,25 +120,74 @@ func (s *Searcher) SearchPath(path string) (matches []Match, errs []error) {
 		}
 		return m, nil
 	}
+	return s.searchDir(path)
+}
 
-	walkErr := filepath.WalkDir(path, func(p string, d fs.DirEntry, err error) error {
+// searchDir walks root and searches every regular file using a bounded pool of
+// worker goroutines. File searches are independent, so running them in parallel
+// overlaps disk I/O with CPU work and uses all available cores. Results are
+// gathered and sorted at the end, so output is deterministic regardless of how
+// the workers were scheduled.
+func (s *Searcher) searchDir(root string) (matches []Match, errs []error) {
+	workers := s.Concurrency
+	if workers <= 0 {
+		workers = runtime.NumCPU()
+	}
+
+	var mu sync.Mutex // guards matches and errs
+	addErr := func(e error) {
+		mu.Lock()
+		errs = append(errs, e)
+		mu.Unlock()
+	}
+
+	paths := make(chan string, workers)
+	var wg sync.WaitGroup
+	for i := 0; i < workers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for p := range paths {
+				m, err := s.SearchFile(p)
+				if err != nil {
+					addErr(err)
+					continue
+				}
+				if len(m) > 0 {
+					mu.Lock()
+					matches = append(matches, m...)
+					mu.Unlock()
+				}
+			}
+		}()
+	}
+
+	walkErr := filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
-			errs = append(errs, err)
+			addErr(err)
 			return nil
 		}
 		if d.IsDir() || !d.Type().IsRegular() {
 			return nil
 		}
-		m, err := s.SearchFile(p)
-		if err != nil {
-			errs = append(errs, err)
-			return nil
-		}
-		matches = append(matches, m...)
+		paths <- p
 		return nil
 	})
+	close(paths)
+	wg.Wait()
+
 	if walkErr != nil {
 		errs = append(errs, walkErr)
 	}
+
+	sort.SliceStable(matches, func(i, j int) bool {
+		if matches[i].Source != matches[j].Source {
+			return matches[i].Source < matches[j].Source
+		}
+		if matches[i].Offset != matches[j].Offset {
+			return matches[i].Offset < matches[j].Offset
+		}
+		return matches[i].Encoding < matches[j].Encoding
+	})
 	return matches, errs
 }

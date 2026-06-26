@@ -28,6 +28,7 @@ func run(args []string, stdin *os.File, stdout, stderr *os.File) int {
 		jsonOut  = fs.Bool("json", false, "emit matches as JSON")
 		listOnly = fs.Bool("list", false, "print the generated patterns and exit (no search)")
 		reOut    = fs.Bool("regexp", false, "print an ERE alternation (for ripgrep / grep -E) and exit (no search)")
+		jobs     = fs.Int("jobs", 0, "number of files to search in parallel during a directory walk (0 = number of CPUs)")
 	)
 	fs.Usage = func() {
 		fmt.Fprintf(stderr, "Usage: base-grep [flags] <target> [path ...]\n\n")
@@ -53,6 +54,7 @@ func run(args []string, stdin *os.File, stdout, stderr *os.File) int {
 
 	variants := permute.GenerateFor(target, encodings)
 	searcher := search.New(variants, *minLen)
+	searcher.Concurrency = *jobs
 
 	if *listOnly {
 		for _, v := range permute.SortByPatternLen(searcher.Variants()) {

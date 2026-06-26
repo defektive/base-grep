@@ -131,6 +131,52 @@ func TestSearchPathFileAndDir(t *testing.T) {
 	}
 }
 
+func TestSearchPathParallelDeterministic(t *testing.T) {
+	dir := t.TempDir()
+	// Many files across nested dirs so the worker pool is actually exercised.
+	for i := 0; i < 50; i++ {
+		sub := filepath.Join(dir, "d", "e", "f")
+		if err := os.MkdirAll(sub, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		name := filepath.Join(sub, "f"+string(rune('a'+i%26))+string(rune('0'+i/26))+".txt")
+		if err := os.WriteFile(name, []byte("pad c2VjcmV0 pad"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	s := newSearcher(t, "secret", 4)
+
+	// Run several times with different worker counts; results must be identical
+	// and stably ordered.
+	var prev []Match
+	for _, jobs := range []int{1, 2, 8, 0} {
+		s.Concurrency = jobs
+		got, errs := s.SearchPath(dir)
+		if len(errs) != 0 {
+			t.Fatalf("jobs=%d: errors %v", jobs, errs)
+		}
+		if len(got) == 0 {
+			t.Fatalf("jobs=%d: no matches", jobs)
+		}
+		if prev != nil && !sameMatches(prev, got) {
+			t.Fatalf("jobs=%d produced different/ordered results than the previous run", jobs)
+		}
+		prev = got
+	}
+}
+
+func sameMatches(a, b []Match) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
 func TestSearchPathMissing(t *testing.T) {
 	s := newSearcher(t, "secret", 4)
 	_, errs := s.SearchPath(filepath.Join(t.TempDir(), "does-not-exist"))
