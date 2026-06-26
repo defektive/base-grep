@@ -90,6 +90,42 @@ func TestCollapsesDuplicatePatterns(t *testing.T) {
 	}
 }
 
+func TestMatchCapturesLine(t *testing.T) {
+	s := newSearcher(t, "secret", 4)
+	data := []byte("first line\nalpha c2VjcmV0 omega\nthird line")
+	matches := s.SearchBytes("x", data)
+
+	var m *Match
+	for i := range matches {
+		if matches[i].Pattern == "c2VjcmV0" {
+			m = &matches[i]
+		}
+	}
+	if m == nil {
+		t.Fatal("expected a match for c2VjcmV0")
+	}
+	if want := "alpha c2VjcmV0 omega"; m.Line != want {
+		t.Errorf("Line = %q, want %q", m.Line, want)
+	}
+	// Col must point at the match within the line.
+	if got := m.Line[m.Col : m.Col+len(m.Pattern)]; got != m.Pattern {
+		t.Errorf("Col %d points at %q, not %q", m.Col, got, m.Pattern)
+	}
+}
+
+func TestMatchLineNoNewlines(t *testing.T) {
+	// A blob with no newlines: the whole thing is one line.
+	s := newSearcher(t, "secret", 4)
+	data := []byte("xxc2VjcmV0yy")
+	matches := s.SearchBytes("x", data)
+	if len(matches) == 0 {
+		t.Fatal("expected a match")
+	}
+	if matches[0].Line != string(data) {
+		t.Errorf("Line = %q, want whole blob %q", matches[0].Line, data)
+	}
+}
+
 func TestMinLenFiltersShortPatterns(t *testing.T) {
 	all := New(permute.Generate([]byte("ab")), 0)
 	filtered := New(permute.Generate([]byte("ab")), 6)

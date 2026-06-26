@@ -45,6 +45,10 @@ type Match struct {
 	// Sources are all the encoding/alignment combinations that produce Pattern.
 	// A match against an ambiguous pattern carries every candidate encoding.
 	Sources []Source
+	// Line is the full line (newline-delimited) containing the match, with no
+	// trailing newline. Col is the byte offset of the match within Line.
+	Line string
+	Col  int
 }
 
 // Encodings returns the distinct encoding names that could produce this match,
@@ -147,11 +151,14 @@ func (s *Searcher) SearchBytes(source string, data []byte) []Match {
 				break
 			}
 			abs := from + i
+			ls, le := lineBounds(data, abs)
 			matches = append(matches, Match{
 				Source:  source,
 				Offset:  abs,
 				Pattern: cp.Pattern,
 				Sources: cp.Sources,
+				Line:    string(data[ls:le]),
+				Col:     abs - ls,
 			})
 			from = abs + 1 // allow overlapping matches
 		}
@@ -163,6 +170,19 @@ func (s *Searcher) SearchBytes(source string, data []byte) []Match {
 		return matches[i].Pattern < matches[j].Pattern
 	})
 	return matches
+}
+
+// lineBounds returns the [start, end) byte range of the line containing off:
+// from just after the previous newline to just before the next one. Our
+// patterns never contain a newline, so the whole match lies within this range.
+func lineBounds(data []byte, off int) (start, end int) {
+	start = bytes.LastIndexByte(data[:off], '\n') + 1 // 0 when there is no prior newline
+	if n := bytes.IndexByte(data[off:], '\n'); n >= 0 {
+		end = off + n
+	} else {
+		end = len(data)
+	}
+	return start, end
 }
 
 // SearchReader reads r fully and searches its contents, labelling matches with

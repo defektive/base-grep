@@ -76,6 +76,32 @@ func TestIntegrationFileSearch(t *testing.T) {
 	}
 }
 
+func TestIntegrationWholeLineDefault(t *testing.T) {
+	stdin := "alpha c2VjcmV0 omega" // base64("secret") with surrounding context
+	out, stderr, code := runBin(t, stdin, "secret")
+	if code != 0 {
+		t.Fatalf("exit=%d stderr=%s", code, stderr)
+	}
+	// The whole line, not just the matched pattern, must be printed.
+	if !strings.Contains(out, "alpha c2VjcmV0 omega") {
+		t.Errorf("expected whole line in output, got:\n%s", out)
+	}
+	// Default (-color auto) into a pipe must NOT emit ANSI escapes.
+	if strings.Contains(out, "\x1b[") {
+		t.Errorf("piped default output should not be colored:\n%q", out)
+	}
+}
+
+func TestIntegrationColorAlways(t *testing.T) {
+	out, stderr, code := runBin(t, "alpha c2VjcmV0 omega", "-color", "always", "secret")
+	if code != 0 {
+		t.Fatalf("exit=%d stderr=%s", code, stderr)
+	}
+	if !strings.Contains(out, "\x1b[1;31mc2VjcmV0\x1b[0m") {
+		t.Errorf("expected highlighted match, got:\n%q", out)
+	}
+}
+
 func TestIntegrationStdinBase32(t *testing.T) {
 	stdin := "header " + base32.StdEncoding.EncodeToString([]byte("topsecret")) + " footer"
 	out, stderr, code := runBin(t, stdin, "-encodings", "base32", "topsecret")

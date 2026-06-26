@@ -18,11 +18,17 @@ then searches for all of them at once.
 Permutations that produce the **same** bytes are collapsed, so each unique
 pattern is scanned and reported only once. For example base64 and base64url are
 identical whenever the pattern uses none of their two differing characters
-(`+/` vs `-_`), so a hit is reported as one match carrying both encodings:
+(`+/` vs `-_`), so a hit is reported as one match carrying both encodings.
+
+Like `grep`, each hit prints the **whole line** with the matched bytes
+highlighted (colored automatically when writing to a terminal):
 
 ```
-dump.bin:42: [base64,base64url off=0] c2VjcmV0
+dump.bin:42: [base64,base64url off=1] log: token=dGhlIH[Bhc3N3b3Jk]IGlzIGh1 status=ok
 ```
+
+(the `[...]` span is shown in bold red on a terminal). For long single-line
+blobs, `-max-columns N` prints just a window around the match.
 
 ```
 target:  "the password is hunter2"
@@ -90,6 +96,8 @@ base-grep -json secret ./dump.bin
 | `-list`       | false   | print generated patterns and exit (no search)      |
 | `-regexp`     | false   | print an ERE alternation for ripgrep / `grep -E`    |
 | `-jobs`       | `0`     | files searched in parallel on a dir walk (0 = #CPUs)|
+| `-color`      | `auto`  | highlight the match: `always`, `never`, or `auto`   |
+| `-max-columns`| `0`     | truncate printed lines to N cols around the match   |
 
 ## Performance
 
