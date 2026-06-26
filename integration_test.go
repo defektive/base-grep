@@ -94,16 +94,22 @@ func TestIntegrationJSONOutput(t *testing.T) {
 		t.Fatalf("exit=%d stderr=%s", code, stderr)
 	}
 	var matches []struct {
-		Source   string `json:"Source"`
-		Offset   int    `json:"Offset"`
-		Encoding string `json:"Encoding"`
-		Pattern  string `json:"Pattern"`
+		Source  string `json:"Source"`
+		Offset  int    `json:"Offset"`
+		Pattern string `json:"Pattern"`
+		Sources []struct {
+			Encoding string `json:"Encoding"`
+			Offset   int    `json:"Offset"`
+		} `json:"Sources"`
 	}
 	if err := json.Unmarshal([]byte(out), &matches); err != nil {
 		t.Fatalf("invalid JSON: %v\n%s", err, out)
 	}
 	if len(matches) == 0 {
 		t.Fatal("expected at least one JSON match")
+	}
+	if len(matches[0].Sources) == 0 {
+		t.Errorf("match missing Sources: %s", out)
 	}
 }
 

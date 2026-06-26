@@ -8,11 +8,22 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"sort"
 	"strings"
 
 	"github.com/defektive/base-grep/internal/permute"
 	"github.com/defektive/base-grep/internal/search"
 )
+
+// patternVariants flattens compiled patterns to variants so the permute
+// regexp builder (which keys on the pattern text) can consume them.
+func patternVariants(pats []search.CompiledPattern) []permute.Variant {
+	out := make([]permute.Variant, len(pats))
+	for i, p := range pats {
+		out[i] = permute.Variant{Pattern: p.Pattern}
+	}
+	return out
+}
 
 func main() {
 	os.Exit(run(os.Args[1:], os.Stdin, os.Stdout, os.Stderr))
@@ -57,14 +68,18 @@ func run(args []string, stdin *os.File, stdout, stderr *os.File) int {
 	searcher.Concurrency = *jobs
 
 	if *listOnly {
-		for _, v := range permute.SortByPatternLen(searcher.Variants()) {
-			fmt.Fprintf(stdout, "%-10s off=%d  %s\n", v.Encoding, v.Offset, v.Pattern)
+		pats := searcher.Patterns()
+		sort.SliceStable(pats, func(i, j int) bool {
+			return len(pats[i].Pattern) > len(pats[j].Pattern)
+		})
+		for _, p := range pats {
+			fmt.Fprintf(stdout, "%-22s %s\n", p.Label(), p.Pattern)
 		}
 		return 0
 	}
 
 	if *reOut {
-		re := permute.RegexpAlternation(searcher.Variants())
+		re := permute.RegexpAlternation(patternVariants(searcher.Patterns()))
 		if re == "" {
 			fmt.Fprintln(stderr, "base-grep: no patterns to build a regexp from (try a lower -min-len)")
 			return 1
@@ -105,7 +120,7 @@ func run(args []string, stdin *os.File, stdout, stderr *os.File) int {
 		}
 	} else {
 		for _, m := range matches {
-			fmt.Fprintf(stdout, "%s:%d: [%s off=%d] %s\n", m.Source, m.Offset, m.Encoding, m.VarOffset, m.Pattern)
+			fmt.Fprintf(stdout, "%s:%d: [%s] %s\n", m.Source, m.Offset, m.Label(), m.Pattern)
 		}
 	}
 	return exit

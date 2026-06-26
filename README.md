@@ -15,6 +15,15 @@ hunting for begin part-way through one of those blocks, the encoded output
 run of characters that is fully determined by your bytes (the "stable middle"),
 then searches for all of them at once.
 
+Permutations that produce the **same** bytes are collapsed, so each unique
+pattern is scanned and reported only once. For example base64 and base64url are
+identical whenever the pattern uses none of their two differing characters
+(`+/` vs `-_`), so a hit is reported as one match carrying both encodings:
+
+```
+dump.bin:42: [base64,base64url off=0] c2VjcmV0
+```
+
 ```
 target:  "the password is hunter2"
 base64:  dGhlIHBhc3N3b3JkIGlzIGh1bnRlcjI

@@ -25,7 +25,7 @@ func TestSearchBytesFindsAlignedBase64(t *testing.T) {
 	}
 	var foundB64 bool
 	for _, m := range matches {
-		if m.Encoding == "base64" {
+		if contains(m.Encodings(), "base64") {
 			foundB64 = true
 			if !strings.Contains(blob, m.Pattern) {
 				t.Errorf("reported pattern %q not in blob", m.Pattern)
@@ -40,16 +40,66 @@ func TestSearchBytesFindsAlignedBase64(t *testing.T) {
 	}
 }
 
+func contains(ss []string, want string) bool {
+	for _, s := range ss {
+		if s == want {
+			return true
+		}
+	}
+	return false
+}
+
+func TestCollapsesDuplicatePatterns(t *testing.T) {
+	// base64 and base64url collapse onto one pattern when it has no +/- _ chars.
+	// "secret" -> "c2VjcmV0" qualifies, so a single match must carry both.
+	s := newSearcher(t, "secret", 4)
+	matches := s.SearchBytes("x", []byte("aa c2VjcmV0 bb"))
+
+	var collapsed *Match
+	for i := range matches {
+		if matches[i].Pattern == "c2VjcmV0" {
+			collapsed = &matches[i]
+		}
+	}
+	if collapsed == nil {
+		t.Fatal("expected a match for c2VjcmV0")
+	}
+	// Exactly one match at that position (not one per encoding).
+	count := 0
+	for _, m := range matches {
+		if m.Pattern == "c2VjcmV0" && m.Offset == collapsed.Offset {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Errorf("duplicate pattern produced %d matches, want 1", count)
+	}
+	if !contains(collapsed.Encodings(), "base64") || !contains(collapsed.Encodings(), "base64url") {
+		t.Errorf("collapsed match missing an encoding: %v", collapsed.Encodings())
+	}
+
+	// And the searcher itself holds only one entry for that pattern.
+	npats := 0
+	for _, p := range s.Patterns() {
+		if p.Pattern == "c2VjcmV0" {
+			npats++
+		}
+	}
+	if npats != 1 {
+		t.Errorf("searcher holds %d patterns for c2VjcmV0, want 1", npats)
+	}
+}
+
 func TestMinLenFiltersShortPatterns(t *testing.T) {
 	all := New(permute.Generate([]byte("ab")), 0)
 	filtered := New(permute.Generate([]byte("ab")), 6)
-	if len(filtered.Variants()) >= len(all.Variants()) {
+	if len(filtered.Patterns()) >= len(all.Patterns()) {
 		t.Errorf("min-len did not filter: all=%d filtered=%d",
-			len(all.Variants()), len(filtered.Variants()))
+			len(all.Patterns()), len(filtered.Patterns()))
 	}
-	for _, v := range filtered.Variants() {
-		if len(v.Pattern) < 6 {
-			t.Errorf("pattern %q shorter than min-len", v.Pattern)
+	for _, p := range filtered.Patterns() {
+		if len(p.Pattern) < 6 {
+			t.Errorf("pattern %q shorter than min-len", p.Pattern)
 		}
 	}
 }
@@ -170,8 +220,16 @@ func sameMatches(a, b []Match) bool {
 		return false
 	}
 	for i := range a {
-		if a[i] != b[i] {
+		if a[i].Source != b[i].Source || a[i].Offset != b[i].Offset || a[i].Pattern != b[i].Pattern {
 			return false
+		}
+		if len(a[i].Sources) != len(b[i].Sources) {
+			return false
+		}
+		for j := range a[i].Sources {
+			if a[i].Sources[j] != b[i].Sources[j] {
+				return false
+			}
 		}
 	}
 	return true
