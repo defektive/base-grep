@@ -6,15 +6,12 @@ import (
 	"bytes"
 	"fmt"
 	"io"
-	"io/fs"
 	"os"
-	"path/filepath"
-	"runtime"
 	"sort"
 	"strings"
-	"sync"
 
 	"github.com/defektive/base-grep/internal/permute"
+	"github.com/defektive/base-grep/scan"
 )
 
 // Source records one encoding/alignment that produces a given pattern. Several
@@ -151,7 +148,7 @@ func (s *Searcher) SearchBytes(source string, data []byte) []Match {
 				break
 			}
 			abs := from + i
-			ls, le := lineBounds(data, abs)
+			ls, le := scan.LineBounds(data, abs)
 			matches = append(matches, Match{
 				Source:  source,
 				Offset:  abs,
@@ -170,19 +167,6 @@ func (s *Searcher) SearchBytes(source string, data []byte) []Match {
 		return matches[i].Pattern < matches[j].Pattern
 	})
 	return matches
-}
-
-// lineBounds returns the [start, end) byte range of the line containing off:
-// from just after the previous newline to just before the next one. Our
-// patterns never contain a newline, so the whole match lies within this range.
-func lineBounds(data []byte, off int) (start, end int) {
-	start = bytes.LastIndexByte(data[:off], '\n') + 1 // 0 when there is no prior newline
-	if n := bytes.IndexByte(data[off:], '\n'); n >= 0 {
-		end = off + n
-	} else {
-		end = len(data)
-	}
-	return start, end
 }
 
 // SearchReader reads r fully and searches its contents, labelling matches with
@@ -205,80 +189,13 @@ func (s *Searcher) SearchFile(path string) ([]Match, error) {
 }
 
 // SearchPath searches a file, or every regular file under a directory
-// (recursively). Unreadable files are reported via the errors slice rather than
-// aborting the whole walk.
+// (recursively), using the shared scan.WalkFiles worker pool. Unreadable files
+// are reported via the errors slice rather than aborting the whole walk. Results
+// are sorted for deterministic output regardless of worker scheduling.
 func (s *Searcher) SearchPath(path string) (matches []Match, errs []error) {
-	info, err := os.Stat(path)
-	if err != nil {
-		return nil, []error{err}
-	}
-	if !info.IsDir() {
-		m, err := s.SearchFile(path)
-		if err != nil {
-			return nil, []error{err}
-		}
-		return m, nil
-	}
-	return s.searchDir(path)
-}
-
-// searchDir walks root and searches every regular file using a bounded pool of
-// worker goroutines. File searches are independent, so running them in parallel
-// overlaps disk I/O with CPU work and uses all available cores. Results are
-// gathered and sorted at the end, so output is deterministic regardless of how
-// the workers were scheduled.
-func (s *Searcher) searchDir(root string) (matches []Match, errs []error) {
-	workers := s.Concurrency
-	if workers <= 0 {
-		workers = runtime.NumCPU()
-	}
-
-	var mu sync.Mutex // guards matches and errs
-	addErr := func(e error) {
-		mu.Lock()
-		errs = append(errs, e)
-		mu.Unlock()
-	}
-
-	paths := make(chan string, workers)
-	var wg sync.WaitGroup
-	for i := 0; i < workers; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for p := range paths {
-				m, err := s.SearchFile(p)
-				if err != nil {
-					addErr(err)
-					continue
-				}
-				if len(m) > 0 {
-					mu.Lock()
-					matches = append(matches, m...)
-					mu.Unlock()
-				}
-			}
-		}()
-	}
-
-	walkErr := filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
-		if err != nil {
-			addErr(err)
-			return nil
-		}
-		if d.IsDir() || !d.Type().IsRegular() {
-			return nil
-		}
-		paths <- p
-		return nil
+	matches, errs = scan.WalkFiles(path, s.Concurrency, true, func(p string, data []byte) ([]Match, error) {
+		return s.SearchBytes(p, data), nil
 	})
-	close(paths)
-	wg.Wait()
-
-	if walkErr != nil {
-		errs = append(errs, walkErr)
-	}
-
 	sort.SliceStable(matches, func(i, j int) bool {
 		if matches[i].Source != matches[j].Source {
 			return matches[i].Source < matches[j].Source

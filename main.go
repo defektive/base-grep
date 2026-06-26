@@ -13,6 +13,7 @@ import (
 
 	"github.com/defektive/base-grep/internal/permute"
 	"github.com/defektive/base-grep/internal/search"
+	"github.com/defektive/base-grep/scan"
 )
 
 // patternVariants flattens compiled patterns to variants so the permute
@@ -134,36 +135,17 @@ func run(args []string, stdin *os.File, stdout, stderr *os.File) int {
 	return exit
 }
 
-// ANSI escapes for the highlighted match (bold red, matching grep's default).
+// ANSI escapes for the highlighted match (bold red, matching grep's default),
+// shared with sibling tools via the scan package.
 const (
-	hiOn  = "\x1b[1;31m"
-	hiOff = "\x1b[0m"
+	hiOn  = scan.HiOn
+	hiOff = scan.HiOff
 )
 
 // resolveColor turns the -color flag value into a boolean, consulting the
 // terminal for "auto".
 func resolveColor(when string, out *os.File) (bool, error) {
-	switch when {
-	case "always":
-		return true, nil
-	case "never":
-		return false, nil
-	case "auto", "":
-		return isTerminal(out), nil
-	default:
-		return false, fmt.Errorf("invalid -color %q (want always, never, or auto)", when)
-	}
-}
-
-func isTerminal(f *os.File) bool {
-	if f == nil {
-		return false
-	}
-	fi, err := f.Stat()
-	if err != nil {
-		return false
-	}
-	return fi.Mode()&os.ModeCharDevice != 0
+	return scan.ResolveColor(when, out)
 }
 
 // renderLine returns the match's line with the matched span highlighted (when
